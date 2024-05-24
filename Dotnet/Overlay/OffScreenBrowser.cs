@@ -8,32 +8,40 @@ using CefSharp;
 using CefSharp.Enums;
 using CefSharp.OffScreen;
 using CefSharp.Structs;
-using SharpDX.Direct3D11;
 using System;
-using System.Runtime.InteropServices;
-using System.Threading;
+using CefSharp.Core;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
+using BrowserSettings = CefSharp.BrowserSettings;
 using Range = CefSharp.Structs.Range;
 
 namespace VRCX
 {
     public class OffScreenBrowser : ChromiumWebBrowser, IRenderHandler
     {
-        private readonly ReaderWriterLockSlim _paintBufferLock;
-        private GCHandle _paintBuffer;
-        private int _width;
-        private int _height;
+        public ComPtr<ID3D11Device1> RenderDevice { get; set; }
+        public ComPtr<ID3D11DeviceContext1> RenderContext { get; set; }
+        public ComPtr<ID3D11Texture2D> RenderOutput { get; set; }
 
         public OffScreenBrowser(string address, int width, int height)
             : base(
                 address,
+                automaticallyCreateBrowser: false
+            )
+        {
+            IWindowInfo info = ObjectFactory.CreateWindowInfo();
+            info.SetAsWindowless(IntPtr.Zero);
+            // Allows us to use OnAcceleratedPaint
+            info.SharedTextureEnabled = true;
+            
+            CreateBrowser(
+                info,
                 new BrowserSettings()
                 {
                     DefaultEncoding = "UTF-8"
                 }
-            )
-        {
-            _paintBufferLock = new ReaderWriterLockSlim();
-
+            );
+            
             Size = new System.Drawing.Size(width, height);
             RenderHandler = this;
 
@@ -44,77 +52,6 @@ namespace VRCX
         {
             RenderHandler = null;
             base.Dispose();
-
-            _paintBufferLock.EnterWriteLock();
-            try
-            {
-                if (_paintBuffer.IsAllocated == true)
-                {
-                    _paintBuffer.Free();
-                }
-            }
-            finally
-            {
-                _paintBufferLock.ExitWriteLock();
-            }
-
-            _paintBufferLock.Dispose();
-        }
-
-        public void RenderToTexture(Texture2D texture)
-        {
-            // Safeguard against uninitialized texture
-            if (texture == null)
-                return;
-            
-            _paintBufferLock.EnterReadLock();
-            try
-            {
-                if (_width > 0 &&
-                    _height > 0)
-                {
-                    var context = texture.Device.ImmediateContext;
-                    var dataBox = context.MapSubresource(
-                        texture,
-                        0,
-                        MapMode.WriteDiscard,
-                        MapFlags.None
-                    );
-                    if (dataBox.IsEmpty == false)
-                    {
-                        var sourcePtr = _paintBuffer.AddrOfPinnedObject();
-                        var destinationPtr = dataBox.DataPointer;
-                        var pitch = _width * 4;
-                        var rowPitch = dataBox.RowPitch;
-                        if (pitch == rowPitch)
-                        {
-                            WinApi.RtlCopyMemory(
-                                destinationPtr,
-                                sourcePtr,
-                                (uint)(_width * _height * 4)
-                            );
-                        }
-                        else
-                        {
-                            for (var y = _height; y > 0; --y)
-                            {
-                                WinApi.RtlCopyMemory(
-                                    destinationPtr,
-                                    sourcePtr,
-                                    (uint)pitch
-                                );
-                                sourcePtr += pitch;
-                                destinationPtr += rowPitch;
-                            }
-                        }
-                    }
-                    context.UnmapSubresource(texture, 0);
-                }
-            }
-            finally
-            {
-                _paintBufferLock.ExitReadLock();
-            }
         }
 
         ScreenInfo? IRenderHandler.GetScreenInfo()
@@ -134,9 +71,22 @@ namespace VRCX
             return new Rect(0, 0, Size.Width, Size.Height);
         }
 
-        void IRenderHandler.OnAcceleratedPaint(PaintElementType type, Rect dirtyRect, AcceleratedPaintInfo paintInfo)
+        unsafe void IRenderHandler.OnAcceleratedPaint(PaintElementType type, Rect dirtyRect, AcceleratedPaintInfo paintInfo)
         {
-            // NOT USED
+            if (type != PaintElementType.View)
+                return;
+            
+            if (RenderDevice.Handle == IntPtr.Zero.ToPointer())
+                return;
+            
+            if (RenderDevice.Handle == IntPtr.Zero.ToPointer())
+                return;
+            
+            IntPtr sharedHandle = paintInfo.SharedTextureHandle;
+            ComPtr<ID3D11Texture2D> sharedResource = default;
+            Guid iid = ID3D11Texture2D.Guid;
+            SilkMarshal.ThrowHResult(RenderDevice.OpenSharedResource1(ref sharedHandle, &iid, (void**)&sharedResource));
+            RenderContext.CopyResource(RenderOutput, sharedResource);
         }
 
         void IRenderHandler.OnCursorChange(IntPtr cursor, CursorType type, CursorInfo customCursorInfo)
@@ -149,37 +99,6 @@ namespace VRCX
 
         void IRenderHandler.OnPaint(PaintElementType type, Rect dirtyRect, IntPtr buffer, int width, int height)
         {
-            if (type == PaintElementType.View)
-            {
-                _paintBufferLock.EnterWriteLock();
-                try
-                {
-                    if (_width != width ||
-                        _height != height)
-                    {
-                        _width = width;
-                        _height = height;
-                        if (_paintBuffer.IsAllocated == true)
-                        {
-                            _paintBuffer.Free();
-                        }
-                        _paintBuffer = GCHandle.Alloc(
-                            new byte[_width * _height * 4],
-                            GCHandleType.Pinned
-                        );
-                    }
-
-                    WinApi.RtlCopyMemory(
-                        _paintBuffer.AddrOfPinnedObject(),
-                        buffer,
-                        (uint)(width * height * 4)
-                    );
-                }
-                finally
-                {
-                    _paintBufferLock.ExitWriteLock();
-                }
-            }
         }
 
         void IRenderHandler.OnPopupShow(bool show)

@@ -49,7 +49,6 @@ namespace VRCX
             cefSettings.CefCommandLineArgs.Add("disable-pdf-extension");
             cefSettings.CefCommandLineArgs["autoplay-policy"] = "no-user-gesture-required";
             cefSettings.CefCommandLineArgs.Add("disable-web-security");
-            cefSettings.SetOffScreenRenderingBestPerformanceArgs(); // causes white screen sometimes?
 
             if (Program.LaunchDebug)
             {
@@ -57,7 +56,6 @@ namespace VRCX
                 cefSettings.CefCommandLineArgs["remote-allow-origins"] = "*";
             }
 
-            //CefSharpSettings.WcfEnabled = true; // TOOD: REMOVE THIS LINE YO (needed for synchronous configRepository)
             CefSharpSettings.ShutdownOnExit = false;
             CefSharpSettings.ConcurrentTaskExecution = true;
 

@@ -12,10 +12,10 @@ using System.Text;
 using System.Threading;
 using CefSharp;
 using SharpDX;
-using SharpDX.Direct3D11;
-using SharpDX.DXGI;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
+using Silk.NET.DXGI;
 using Valve.VR;
-using Device = SharpDX.Direct3D11.Device;
 
 namespace VRCX
 {
@@ -34,15 +34,21 @@ namespace VRCX
         private readonly List<string[]> _deviceList;
         private readonly ReaderWriterLockSlim _deviceListLock;
         private bool _active;
-        private Device _device;
         private bool _hmdOverlayActive;
         private bool _menuButton;
         private int _overlayHand;
-        private Texture2D _texture1;
-        private Texture2D _texture2;
         private Thread _thread;
         private bool _wristOverlayActive;
+        
         public bool IsHmdAfk { get; private set; }
+        
+        private DXGI _dxgi;
+        private D3D11 _d3d11;
+        private ComPtr<IDXGIAdapter1> _adapter;
+        private ComPtr<ID3D11Device1> _device;
+        private ComPtr<ID3D11DeviceContext1> _deviceContext;
+        private ComPtr<ID3D11Texture2D> _texture1;
+        private ComPtr<ID3D11Texture2D> _texture2;
 
         static VRCXVR()
         {
@@ -82,44 +88,88 @@ namespace VRCX
             MainForm.Instance.Browser.ExecuteScriptAsync("console.log('VRCXVR Restarted');");
         }
 
-        private void SetupTextures()
+        private unsafe void SetupTextures()
         {
-            Factory f = new Factory1();
-            _device = new Device(f.GetAdapter(OpenVR.System.GetD3D9AdapterIndex()),
-                DeviceCreationFlags.SingleThreaded | DeviceCreationFlags.BgraSupport);
-
-            _texture1?.Dispose();
-            _texture1 = new Texture2D(
-                _device,
-                new Texture2DDescription
-                {
-                    Width = 512,
-                    Height = 512,
-                    MipLevels = 1,
-                    ArraySize = 1,
-                    Format = Format.B8G8R8A8_UNorm,
-                    SampleDescription = new SampleDescription(1, 0),
-                    Usage = ResourceUsage.Dynamic,
-                    BindFlags = BindFlags.ShaderResource,
-                    CpuAccessFlags = CpuAccessFlags.Write
-                }
+            _dxgi = DXGI.GetApi(null);
+            _d3d11 = D3D11.GetApi(null);
+            
+            IDXGIFactory3* dxgiFactory;
+            var iid = IDXGIFactory3.Guid;
+            _dxgi.CreateDXGIFactory2(0u, &iid, (void**)&dxgiFactory);
+            
+            SilkMarshal.ThrowHResult(dxgiFactory->EnumAdapters1((uint) OpenVR.System.GetD3D9AdapterIndex(), ref _adapter));
+            
+            SilkMarshal.ThrowHResult(
+                _d3d11.CreateDevice(
+                    default(ComPtr<IDXGIAdapter>),
+                    D3DDriverType.Hardware,
+                    Software: default,
+                    (uint) CreateDeviceFlag.None,
+                    null,
+                    0,
+                    D3D11.SdkVersion,
+                    ref _device,
+                    null,
+                    ref _deviceContext
+                )
             );
             
-            _texture2?.Dispose();
-            _texture2 = new Texture2D(
-                _device,
-                new Texture2DDescription
-                {
-                    Width = 1024,
-                    Height = 1024,
-                    MipLevels = 1,
-                    ArraySize = 1,
-                    Format = Format.B8G8R8A8_UNorm,
-                    SampleDescription = new SampleDescription(1, 0),
-                    Usage = ResourceUsage.Dynamic,
-                    BindFlags = BindFlags.ShaderResource,
-                    CpuAccessFlags = CpuAccessFlags.Write
-                }
+            Texture2DDesc texture1Desc = new Texture2DDesc
+            {
+                Width = 512,
+                Height = 512,
+                Format = Format.FormatB8G8R8A8Unorm,
+                MipLevels = 1,
+                BindFlags = (uint) BindFlag.ShaderResource,
+                Usage = Usage.Default,
+                CPUAccessFlags = 0,
+                MiscFlags = (uint) ResourceMiscFlag.None,
+                SampleDesc = new SampleDesc(1, 0),
+                ArraySize = 1
+            };
+            
+            SubresourceData subresource1Data = new SubresourceData
+            {
+                PSysMem = Marshal.AllocHGlobal(512 * sizeof(int) * 512).ToPointer(),
+                SysMemPitch = 512 * sizeof(int),
+                SysMemSlicePitch = 512 * sizeof(int) * 512
+            };
+            
+            SilkMarshal.ThrowHResult(
+                _device.CreateTexture2D(
+                    in texture1Desc,
+                    in subresource1Data,
+                    ref _texture1
+                )
+            );
+            
+            Texture2DDesc texture2Desc = new Texture2DDesc
+            {
+                Width = 1024,
+                Height = 1024,
+                Format = Format.FormatB8G8R8A8Unorm,
+                MipLevels = 1,
+                BindFlags = (uint) BindFlag.ShaderResource,
+                Usage = Usage.Default,
+                CPUAccessFlags = 0,
+                MiscFlags = (uint) ResourceMiscFlag.None,
+                SampleDesc = new SampleDesc(1, 0),
+                ArraySize = 1
+            };
+            
+            SubresourceData subresource2Data = new SubresourceData
+            {
+                PSysMem = Marshal.AllocHGlobal(1024 * sizeof(int) * 1024).ToPointer(),
+                SysMemPitch = 1024 * sizeof(int),
+                SysMemSlicePitch = 1024 * sizeof(int) * 1024
+            };
+            
+            SilkMarshal.ThrowHResult(
+                _device.CreateTexture2D(
+                    in texture2Desc,
+                    in subresource2Data,
+                    ref _texture2
+                )
             );
         }
 
@@ -151,7 +201,7 @@ namespace VRCX
 
             while (_thread != null)
             {
-                if (_wristOverlayActive)
+                /*if (_wristOverlayActive)
                     _browser1.RenderToTexture(_texture1);
                 if (_hmdOverlayActive)
                     _browser2.RenderToTexture(_texture2);
@@ -161,7 +211,7 @@ namespace VRCX
                 }
                 catch (ThreadInterruptedException)
                 {
-                }
+                }*/
 
                 if (_active)
                 {
@@ -183,6 +233,12 @@ namespace VRCX
 
                         active = true;
                         SetupTextures();
+                        _browser1.RenderDevice = _device;
+                        _browser1.RenderContext = _deviceContext;
+                        _browser1.RenderOutput = _texture1;
+                        _browser2.RenderDevice = _device;
+                        _browser2.RenderContext = _deviceContext;
+                        _browser2.RenderOutput = _texture2;
                     }
 
                     while (system.PollNextEvent(ref e, (uint)Marshal.SizeOf(e)))
@@ -265,9 +321,9 @@ namespace VRCX
 
             _browser2?.Dispose();
             _browser1?.Dispose();
-            _texture2?.Dispose();
-            _texture1?.Dispose();
-            _device?.Dispose();
+            _texture2.Dispose();
+            _texture1.Dispose();
+            _device.Dispose();
         }
 
         public void SetActive(bool active, bool hmdOverlay, bool wristOverlay, bool menuButton, int overlayHand)
@@ -466,7 +522,7 @@ namespace VRCX
             }
         }
 
-        internal EVROverlayError ProcessDashboard(CVROverlay overlay, ref ulong dashboardHandle, bool dashboardVisible)
+        internal unsafe EVROverlayError ProcessDashboard(CVROverlay overlay, ref ulong dashboardHandle, bool dashboardVisible)
         {
             var err = EVROverlayError.None;
 
@@ -537,7 +593,7 @@ namespace VRCX
             {
                 var texture = new Texture_t
                 {
-                    handle = _texture1.NativePointer
+                    handle = new IntPtr(_texture1.Handle)
                 };
                 err = overlay.SetOverlayTexture(dashboardHandle, ref texture);
                 if (err != EVROverlayError.None)
@@ -549,7 +605,7 @@ namespace VRCX
             return err;
         }
 
-        internal EVROverlayError ProcessOverlay1(CVROverlay overlay, ref ulong overlayHandle, ref bool overlayVisible, bool dashboardVisible, uint overlayIndex, DateTime nextOverlay)
+        internal unsafe EVROverlayError ProcessOverlay1(CVROverlay overlay, ref ulong overlayHandle, ref bool overlayVisible, bool dashboardVisible, uint overlayIndex, DateTime nextOverlay)
         {
             var err = EVROverlayError.None;
 
@@ -626,7 +682,7 @@ namespace VRCX
             {
                 var texture = new Texture_t
                 {
-                    handle = _texture1.NativePointer
+                    handle = new IntPtr(_texture1.Handle)
                 };
                 err = overlay.SetOverlayTexture(overlayHandle, ref texture);
                 if (err != EVROverlayError.None)
@@ -659,7 +715,7 @@ namespace VRCX
             return err;
         }
 
-        internal EVROverlayError ProcessOverlay2(CVROverlay overlay, ref ulong overlayHandle, ref bool overlayVisible, bool dashboardVisible)
+        internal unsafe EVROverlayError ProcessOverlay2(CVROverlay overlay, ref ulong overlayHandle, ref bool overlayVisible, bool dashboardVisible)
         {
             var err = EVROverlayError.None;
 
@@ -727,7 +783,7 @@ namespace VRCX
             {
                 var texture = new Texture_t
                 {
-                    handle = _texture2.NativePointer
+                    handle = new IntPtr(_texture2.Handle)
                 };
                 err = overlay.SetOverlayTexture(overlayHandle, ref texture);
                 if (err != EVROverlayError.None)
