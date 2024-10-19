@@ -87,7 +87,7 @@ namespace VRCX
         {
             Factory f = new Factory1();
             _device = new Device(f.GetAdapter(OpenVR.System.GetD3D9AdapterIndex()),
-                DeviceCreationFlags.SingleThreaded | DeviceCreationFlags.BgraSupport);
+                DeviceCreationFlags.BgraSupport);
 
             _texture1?.Dispose();
             _texture1 = new Texture2D(
@@ -105,7 +105,8 @@ namespace VRCX
                     CpuAccessFlags = CpuAccessFlags.Write
                 }
             );
-            
+            _browser1?.UpdateRender(_device, _texture1);
+
             _texture2?.Dispose();
             _texture2 = new Texture2D(
                 _device,
@@ -122,6 +123,7 @@ namespace VRCX
                     CpuAccessFlags = CpuAccessFlags.Write
                 }
             );
+            _browser2?.UpdateRender(_device, _texture2);
         }
 
         private void ThreadLoop()
@@ -152,10 +154,6 @@ namespace VRCX
 
             while (_thread != null)
             {
-                if (_wristOverlayActive)
-                    _browser1.RenderToTexture(_texture1);
-                if (_hmdOverlayActive)
-                    _browser2.RenderToTexture(_texture2);
                 try
                 {
                     Thread.Sleep(32);
