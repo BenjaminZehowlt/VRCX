@@ -34,6 +34,7 @@ namespace VRCX
             var browserSettings = new BrowserSettings()
             {
                 DefaultEncoding = "UTF-8",
+                WindowlessFrameRate = 60
             };
             
             CreateBrowser(windowInfo, browserSettings);

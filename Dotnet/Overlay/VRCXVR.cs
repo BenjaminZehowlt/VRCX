@@ -100,9 +100,7 @@ namespace VRCX
                     ArraySize = 1,
                     Format = Format.B8G8R8A8_UNorm,
                     SampleDescription = new SampleDescription(1, 0),
-                    Usage = ResourceUsage.Dynamic,
-                    BindFlags = BindFlags.ShaderResource,
-                    CpuAccessFlags = CpuAccessFlags.Write
+                    BindFlags = BindFlags.ShaderResource
                 }
             );
             _browser1?.UpdateRender(_device, _texture1);
@@ -118,9 +116,7 @@ namespace VRCX
                     ArraySize = 1,
                     Format = Format.B8G8R8A8_UNorm,
                     SampleDescription = new SampleDescription(1, 0),
-                    Usage = ResourceUsage.Dynamic,
-                    BindFlags = BindFlags.ShaderResource,
-                    CpuAccessFlags = CpuAccessFlags.Write
+                    BindFlags = BindFlags.ShaderResource
                 }
             );
             _browser2?.UpdateRender(_device, _texture2);
