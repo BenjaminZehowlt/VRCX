@@ -11,16 +11,23 @@ using CefSharp.Structs;
 using SharpDX.Direct3D11;
 using System;
 using System.Threading;
+using System.Windows.Forms;
+using SharpDX;
 using SharpDX.Direct3D;
 using SharpDX.Mathematics.Interop;
 using Range = CefSharp.Structs.Range;
+using Rect = CefSharp.Structs.Rect;
 
 namespace VRCX
 {
     public class OffScreenBrowser : ChromiumWebBrowser, IRenderHandler
     {
-        private Device _device;
-        private Device1 _device1;
+        private static NLog.Logger logger = NLog.LogManager.GetCurrentClassLogger();
+
+        private bool _isAllowedToRender = true;
+        
+        private Device _targetDevice;
+        private Device1 _sourceDevice1;
         private DeviceMultithread _deviceMultithread;
         private Query _query;
         private Texture2D _renderTarget;
@@ -51,17 +58,22 @@ namespace VRCX
 
         public void UpdateRender(Device device, Texture2D renderTarget)
         {
-            _device = device;
-            _device1 = _device.QueryInterface<Device1>();
+            // We're going to give it a chance to reset, unlikely to work
+            _isAllowedToRender = true;
+            
+            _sourceDevice1?.Dispose();
+            _sourceDevice1 = null;
+            
+            _targetDevice = device;
             
             _deviceMultithread?.Dispose();
-            _deviceMultithread = _device.QueryInterfaceOrNull<DeviceMultithread>();
+            _deviceMultithread = _targetDevice.QueryInterfaceOrNull<DeviceMultithread>();
             _deviceMultithread?.SetMultithreadProtected(true);
 
             _renderTarget = renderTarget;
             
             _query?.Dispose();
-            _query = new Query(_device, new QueryDescription
+            _query = new Query(_targetDevice, new QueryDescription
             {
                 Type = QueryType.Event,
                 Flags = QueryFlags.None
@@ -96,23 +108,42 @@ namespace VRCX
 
         void IRenderHandler.OnAcceleratedPaint(PaintElementType type, Rect dirtyRect, AcceleratedPaintInfo paintInfo)
         {
+            if (!_isAllowedToRender)
+                return;
+            
             if (type != PaintElementType.View)
                 return;
 
-            if (_device == null)
+            if (_targetDevice == null)
                 return;
             
-            using Texture2D cefTexture = _device1.OpenSharedResource1<Texture2D>(paintInfo.SharedTextureHandle);
-            _device.ImmediateContext.CopyResource(cefTexture, _renderTarget);
-            _device.ImmediateContext.End(_query);
-            _device.ImmediateContext.Flush();
-
-            RawBool q = _device.ImmediateContext.GetData<RawBool>(_query, AsynchronousFlags.DoNotFlush);
-
-            while (!q)
+            try
             {
-                Thread.Yield();
-                q = _device.ImmediateContext.GetData<RawBool>(_query, AsynchronousFlags.DoNotFlush);
+                if (_sourceDevice1 == null)
+                {
+                    Device device = new Device(DriverType.Hardware, DeviceCreationFlags.BgraSupport);
+                    _sourceDevice1 = device.QueryInterface<Device1>();
+                    device.Dispose();
+                }
+                
+                using Texture2D cefTexture = _sourceDevice1.OpenSharedResource1<Texture2D>(paintInfo.SharedTextureHandle);
+                _targetDevice.ImmediateContext.CopyResource(cefTexture, _renderTarget);
+                _targetDevice.ImmediateContext.End(_query);
+                _targetDevice.ImmediateContext.Flush();
+
+                RawBool q = _targetDevice.ImmediateContext.GetData<RawBool>(_query, AsynchronousFlags.DoNotFlush);
+
+                while (!q)
+                {
+                    Thread.Yield();
+                    q = _targetDevice.ImmediateContext.GetData<RawBool>(_query, AsynchronousFlags.DoNotFlush);
+                }
+            }
+            catch (SharpDXException ex)
+            {
+                _isAllowedToRender = false;
+                logger.Error(ex);
+                MessageBox.Show(ex.ToString(), "Failed to render VRCX VR Overlay", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
