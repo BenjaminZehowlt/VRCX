@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - Nightly
+      - build
     paths-ignore:
       - "Linux/**"
 
